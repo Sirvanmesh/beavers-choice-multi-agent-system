@@ -1,0 +1,80 @@
+---
+title: "Beaver's Choice Paper Company - Multi-Agent Sales Team Workflow (smolagents, 5 agents)"
+config:
+  flowchart:
+    curve: basis
+    nodeSpacing: 30
+    rankSpacing: 60
+  themeVariables:
+    fontSize: 17px
+---
+flowchart TB
+    CUST(["Customer request text + request_date<br/>(run_test_scenarios -> handle_customer_request)"]):::io
+
+    subgraph ORCH["OrchestratorAgent - orchestrator_agent (ToolCallingAgent with 3 managed agents): delegates, then writes the customer reply"]
+        direction LR
+        O1["<b>get_order_summary</b><br/>helper: format_customer_summary (order book)<br/>purpose: customer-safe facts for the reply<br/>in: (active order) / out: items, qty, unit price,<br/>discount + reason, total, dates, rejection reasons"]
+        O2["<b>handle_customer_request wrapper</b> (Python, not an LLM tool)<br/>complete_missing_steps: re-runs a skipped worker stage<br/>sanitize_customer_reply: drops internal terms,<br/>polite fallback reply if the LLM fails"]
+    end
+
+    subgraph INV["InventoryAgent - inventory_agent: stock, catalog mapping, reorder decisions"]
+        direction TB
+        I0["<b>get_customer_request</b><br/>helper: order book (original request)<br/>purpose: read full request text, date, deadline<br/>in: (active order) / out: request text"]
+        I1["<b>get_inventory_snapshot</b><br/>helper: get_all_inventory<br/>purpose: items in stock on a date<br/>in: date / out: item: units"]
+        I2["<b>find_catalog_item</b><br/>helper: resolve_catalog_item (paper_supplies)<br/>purpose: customer wording -> exact item name<br/>in: description / out: catalog name + price"]
+        I3["<b>check_item_stock</b><br/>helper: get_stock_level<br/>purpose: units on hand for one item<br/>in: item, date / out: units"]
+        I4["<b>check_supplier_lead_time</b><br/>helper: get_supplier_delivery_date<br/>purpose: supplier delivery estimate<br/>in: qty, date / out: delivery date"]
+        I5["<b>assess_item_request</b><br/>helpers: get_stock_level, get_supplier_delivery_date,<br/>get_cash_balance, create_transaction('stock_orders')<br/>purpose: restock only if supplier date <= deadline<br/>AND cash stays above reserve, else reject<br/>in: item wording, qty, unit, deadline<br/>out: AVAILABLE + date / REJECTED + reason"]
+    end
+
+    subgraph QUO["QuotingAgent - quoting_agent: prices + bulk discounts"]
+        direction TB
+        Q1["<b>search_past_quotes</b><br/>helper: search_quote_history<br/>purpose: comparable past quotes<br/>in: keywords / out: past totals + notes"]
+        Q2["<b>build_quote</b><br/>helpers: catalog unit_price, search_quote_history<br/>purpose: price AVAILABLE lines; discount on total units:<br/>5% at 1,000+, 10% at 5,000+, 15% at 10,000+<br/>in: (active order) / out: quote_id + breakdown"]
+    end
+
+    subgraph SAL["SalesAgent - sales_agent: finalizes orders in the database"]
+        direction TB
+        S1["<b>check_cash_position</b><br/>helper: get_cash_balance<br/>purpose: internal cash check<br/>in: date / out: cash (internal only)"]
+        S2["<b>finalize_order</b><br/>helpers: get_stock_level, create_transaction('sales')<br/>purpose: re-check stock + deadline, book sales<br/>in: quote_id / out: SALE RECORDED"]
+        S3["<b>financial_health_check</b><br/>helper: generate_financial_report<br/>purpose: internal post-sale health check<br/>in: date / out: cash, inventory value"]
+    end
+
+    REPLY(["Customer reply: items, quantities, unit prices, discount + why,<br/>total, delivery date, reason for each item we cannot supply"]):::io
+
+    BOOK[("Order book (in memory)<br/>OrderRecord per request_id<br/>(tools act on the ACTIVE request):<br/>request text, line decisions, quote, sold flags")]:::store
+    DB[("SQLite munder_difflin.db<br/>transactions, inventory,<br/>quotes, quote_requests")]:::store
+
+    subgraph ADV["BusinessAdvisorAgent - business_advisor_agent: internal review after all requests"]
+        A1["<b>review_business_performance</b><br/>helpers: generate_financial_report + transactions table<br/>purpose: statuses, rejection reasons, restock spend, top sellers<br/>in: date / out: performance digest"]
+    end
+    ADVOUT(["Internal recommendations (printed, never sent to customers)"]):::io
+
+    CUST -->|"request_id, date, deadline, text<br/>(sets the active order)"| ORCH
+    ORCH -->|"1. task: assess every item<br/>(order date, deadline)"| INV
+    INV -.->|"AVAILABLE / REJECTED per item"| ORCH
+    ORCH -->|"2. task: build the quote"| QUO
+    QUO -.->|"quote_id + price breakdown"| ORCH
+    ORCH -->|"3. task: finalize quote_id (order date)"| SAL
+    SAL -.->|"SALE RECORDED / NOTHING SOLD"| ORCH
+    ORCH ==>|"4. final answer (sanitized)"| REPLY
+
+    INV <-->|"read stock, cash /<br/>write stock_orders"| DB
+    INV <-->|"read request / write line decisions"| BOOK
+    QUO -->|"read past quotes"| DB
+    QUO <-->|"read lines / write quote"| BOOK
+    SAL <-->|"read stock, cash, report /<br/>write sales"| DB
+    SAL <-->|"read quote / mark sold"| BOOK
+    O1 -->|"read"| BOOK
+
+    DB -->|"read"| ADV
+    BOOK -->|"read"| ADV
+    ADV --> ADVOUT
+
+    classDef io fill:#fff4d6,stroke:#b8860b,color:#222
+    classDef store fill:#e3f2fd,stroke:#1565c0,color:#222
+    style ORCH fill:#ede7f6,stroke:#5e35b1,color:#222
+    style INV fill:#e8f5e9,stroke:#2e7d32,color:#222
+    style QUO fill:#fff3e0,stroke:#ef6c00,color:#222
+    style SAL fill:#fce4ec,stroke:#c2185b,color:#222
+    style ADV fill:#eceff1,stroke:#455a64,color:#222

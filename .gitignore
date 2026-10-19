@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python / notebook caches
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Secrets (API keys)
+.env
+*.env
+
+# Generated SQLite database (recreated by project_starter.py)
+*.db
+
+# Temporary diagram scripts
+make_diagram*.py
+render_diagram*.py
+diagram_tmp*
+
+# Large files (GitHub limit is 100 MB)
+*.zip
+*.tar.gz
+*.parquet
